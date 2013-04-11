@@ -9,6 +9,9 @@ getInitFileFromModelName(const std::string& modelName,
 			 const std::string& defaultPath);
 
 std::string
+getFlashCodePoseFileFromModelName (const std::string& modelName,
+				   const std::string& defaultPath);
+std::string
 getConfigurationFileFromModelName(const std::string& modelName,
 				  const std::string& configurationName,
 				  const std::string& defaultPath);

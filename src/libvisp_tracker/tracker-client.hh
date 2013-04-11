@@ -31,6 +31,7 @@
 # include <visp/vpKltOpencv.h>
 # include <visp/vpPose.h>
 
+#include "detectors/detector_base.h"
 
 namespace visp_tracker
 {
@@ -65,6 +66,7 @@ namespace visp_tracker
 
     bool validatePose(const vpHomogeneousMatrix& cMo);
     vpHomogeneousMatrix loadInitialPose();
+    vpHomogeneousMatrix loadPose(const std::string& fileName);
     void saveInitialPose(const vpHomogeneousMatrix& cMo);
     points_t loadInitializationPoints();
 
@@ -90,6 +92,9 @@ namespace visp_tracker
     {
       return exiting_ || !ros::ok();
     }
+
+    void find_flashcode_pos(vpHomogeneousMatrix& cMo);
+    void initFromFlashCode();
 
     volatile bool& exiting_;
 
@@ -128,6 +133,10 @@ namespace visp_tracker
 
     bool startFromSavedPose_;
     bool confirmInit_;
+    bool useFlashCodeQRCode_;
+    bool useFlashCodeDataMatrix_;
+    double flashcode_size_;
+    detectors::DetectorBase* detector_;
 
     /// \brief Helper used to check that subscribed topics exist.
     image_proc::AdvertisementChecker checkInputs_;

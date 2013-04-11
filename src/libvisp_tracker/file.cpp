@@ -23,6 +23,15 @@ getInitFileFromModelName (const std::string& modelName,
 }
 
 std::string
+getFlashCodePoseFileFromModelName (const std::string& modelName,
+				   const std::string& defaultPath)
+{
+  boost::format fmt("%1%/%2%/%2%.flashcode.pos");
+  fmt % defaultPath % modelName;
+  return fmt.str ();
+}
+
+std::string
 getModelFileFromModelName (const std::string& modelName,
 			   const std::string& defaultPath)
 {
