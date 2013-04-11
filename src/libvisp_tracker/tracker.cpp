@@ -63,18 +63,18 @@ namespace visp_tracker
     if (!makeModelFile(modelStream, fullModelPath))
       return true;
 
-    // Load moving edges.     
+    // Load moving edges.
     vpMe movingEdge;
     visp_tracker::ModelBasedSettingsConfig config;
     tracker_->resetTracker();
-    
+
     if(trackerType_!="klt"){ // for mbt and hybrid
       convertInitRequestToVpMe(req, tracker_, movingEdge);
       // Update parameters.
       convertVpMeToModelBasedSettingsConfig(movingEdge, tracker_, config);
       reconfigureSrv_.updateConfig(config);
     }
-    
+
     vpKltOpencv klt;
     if(trackerType_!="mbt"){ // for klt and hybrid
       convertInitRequestToVpKltOpencv(req, tracker_, klt);
@@ -82,7 +82,7 @@ namespace visp_tracker
       convertVpKltOpencvToModelBasedSettingsConfig(klt, tracker_, config);
       reconfigureSrv_.updateConfig(config);
     }
-    
+
     state_ = WAITING_FOR_INITIALIZATION;
     lastTrackedImage_ = 0;
 
@@ -176,27 +176,28 @@ namespace visp_tracker
     vpMbHiddenFaces<vpMbtKltPolygon> *poly_lst;
     std::map<int, vpImagePoint> *map_klt;
 
-    if(trackerType_!="mbt") // For klt and hybrid
+    if(trackerType_!="mbt"){ // For klt and hybrid
       poly_lst = &dynamic_cast<vpMbKltTracker*>(tracker_)->getFaces();
 
-    for(unsigned int i = 0 ; i < poly_lst->size() ; i++)
-    {
-      if((*poly_lst)[i])
-      {
-        map_klt = &((*poly_lst)[i]->getCurrentPoints());
+      for(unsigned int i = 0 ; i < poly_lst->size() ; i++)
+	{
+	  if((*poly_lst)[i])
+	    {
+	      map_klt = &((*poly_lst)[i]->getCurrentPoints());
 
-        if(map_klt->size() > 3)
-        {
-          for (std::map<int, vpImagePoint>::iterator it=map_klt->begin(); it!=map_klt->end(); ++it)
-          {
-            visp_tracker::KltPoint kltPoint;
-            kltPoint.id = it->first;
-            kltPoint.i = it->second.get_i();
-            kltPoint.j = it->second.get_j();
-            klt->klt_points_positions.push_back (kltPoint);
-          }
-        }
-      }
+	      if(map_klt->size() > 3)
+		{
+		  for (std::map<int, vpImagePoint>::iterator it=map_klt->begin(); it!=map_klt->end(); ++it)
+		    {
+		      visp_tracker::KltPoint kltPoint;
+		      kltPoint.id = it->first;
+		      kltPoint.i = it->second.get_i();
+		      kltPoint.j = it->second.get_j();
+		      klt->klt_points_positions.push_back (kltPoint);
+		    }
+		}
+	    }
+	}
     }
   }
 
@@ -326,19 +327,19 @@ namespace visp_tracker
       vpMbEdgeTracker* t = dynamic_cast<vpMbEdgeTracker*>(tracker_);
       t->setMovingEdge(movingEdge_);
     }
-    
+
     if(trackerType_!="mbt"){
       vpMbKltTracker* t = dynamic_cast<vpMbKltTracker*>(tracker_);
       t->setKltOpencv(kltTracker_);
     }
-    
+
     // Dynamic reconfigure.
     reconfigureSrv_t::CallbackType f =
       boost::bind(&reconfigureCallback, boost::ref(tracker_),
                   boost::ref(image_), boost::ref(movingEdge_), boost::ref(kltTracker_),
                   boost::ref(trackerType_), boost::ref(mutex_), _1, _2);
     reconfigureSrv_.setCallback(f);
-    
+
     // Wait for the image to be initialized.
     waitForImage();
     if (this->exiting())
@@ -381,14 +382,14 @@ namespace visp_tracker
     initService_ = nodeHandle_.advertiseService
       (visp_tracker::init_service, initCallback);
   }
-  
+
   Tracker::~Tracker()
   {
-    delete tracker_;  
+    delete tracker_;
   }
 
   void Tracker::spin()
-  {    
+  {
       ros::Rate loopRateTracking(100);
       tf::Transform transform;
       std_msgs::Header lastHeader;
