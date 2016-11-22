@@ -37,6 +37,10 @@
 
 #include "tracker-client.hh"
 
+//detectors
+#include "detectors/datamatrix/detector.h"
+#include "detectors/qrcode/detector.h"
+
 
 namespace visp_tracker
 {
@@ -66,7 +70,8 @@ namespace visp_tracker
       tracker_(),
       startFromSavedPose_(),
       checkInputs_(),
-      resourceRetriever_()
+      resourceRetriever_(),
+      detector_(NULL)
   {
     // Parameters.
     nodeHandlePrivate_.param<std::string>("model_path", modelPath_,
@@ -134,12 +139,12 @@ namespace visp_tracker
       vpMbEdgeTracker* t = dynamic_cast<vpMbEdgeTracker*>(tracker_);
       t->setMovingEdge(movingEdge_);
     }
-    
+
     if(trackerType_!="mbt"){
       vpMbKltTracker* t = dynamic_cast<vpMbKltTracker*>(tracker_);
       t->setKltOpencv(kltTracker_);
     }
-    
+
     // Dynamic reconfigure.
     reconfigureSrv_t::CallbackType f =
       boost::bind(&reconfigureCallback, boost::ref(tracker_),
@@ -195,7 +200,7 @@ namespace visp_tracker
       vpMbEdgeTracker* t = dynamic_cast<vpMbEdgeTracker*>(tracker_);
       t->setMovingEdge(movingEdge_);
     }
-    
+
     if(trackerType_!="mbt"){
       vpMbKltTracker* t = dynamic_cast<vpMbKltTracker*>(tracker_);
       t->setKltOpencv(kltTracker_);
@@ -204,6 +209,21 @@ namespace visp_tracker
     // Display camera parameters and moving edges settings.
     ROS_INFO_STREAM(cameraParameters_);
     movingEdge_.print();
+
+    // Detector parameters
+    nodeHandlePrivate_.param<double>
+      ("flashcode_size", flashcode_size_, 0.0);
+
+    nodeHandlePrivate_.param<bool>
+      ("use_flashcode_qrcode", useFlashCodeQRCode_, false);
+    nodeHandlePrivate_.param<bool>
+      ("use_flashcode_datamatrix", useFlashCodeDataMatrix_, false);
+
+    //init detector based on user preference
+    if (useFlashCodeQRCode_)
+      detector_ = new detectors::qrcode::Detector;
+    else if(useFlashCodeDataMatrix_)
+      detector_ = new detectors::datamatrix::Detector;
   }
 
   void
@@ -235,15 +255,17 @@ namespace visp_tracker
 	    // Initialize.
 	    vpDisplay::display(image_);
 	    vpDisplay::flush(image_);
-	    if (!startFromSavedPose_)
+	    if (startFromSavedPose_){
+	      cMo = loadInitialPose();
+	      startFromSavedPose_ = false;
+	      tracker_->initFromPose(image_, cMo);
+	    }else if(useFlashCodeDataMatrix_ || useFlashCodeQRCode_){
+	      initFromFlashCode();
+	    }else{
 	      init();
-	    else
-	      {
-		cMo = loadInitialPose();
-		startFromSavedPose_ = false;
-        tracker_->initFromPose(image_, cMo);
-	      }
-        tracker_->getPose(cMo);
+	    }
+
+	    tracker_->getPose(cMo);
 
 	    ROS_INFO_STREAM("initial pose [tx,ty,tz,tux,tuy,tuz]:\n"
 			    << vpPoseVector(cMo));
@@ -251,37 +273,37 @@ namespace visp_tracker
 	    // Track once to make sure initialization is correct.
 	    if (confirmInit_)
 	      {
-		vpImagePoint ip;
-		vpMouseButton::vpMouseButtonType button =
-		  vpMouseButton::button1;
-		do
-		  {
-		    vpDisplay::display(image_);
-            tracker_->track(image_);
-            tracker_->display(image_, cMo, cameraParameters_,
-				     vpColor::red, 2);
-		    vpDisplay::displayCharString
-		      (image_, point, "tracking, click to initialize tracker",
-		       vpColor::red);
-		    vpDisplay::flush(image_);
-            tracker_->getPose(cMo);
+	      vpImagePoint ip;
+	      vpMouseButton::vpMouseButtonType button =
+		vpMouseButton::button1;
+	      do
+		{
+		  vpDisplay::display(image_);
+		  tracker_->track(image_);
+		  tracker_->display(image_, cMo, cameraParameters_,
+				    vpColor::red, 2);
+		  vpDisplay::displayCharString
+		    (image_, point, "tracking, click to initialize tracker",
+		     vpColor::red);
+		  vpDisplay::flush(image_);
+		  tracker_->getPose(cMo);
 
-		    ros::spinOnce();
-		    loop_rate_tracking.sleep();
-		    if (exiting())
-		      return;
-		  }
-		while(!vpDisplay::getClick(image_, ip, button, false));
-		ok = true;
-	      }
+		  ros::spinOnce();
+		loop_rate_tracking.sleep();
+		if (exiting())
+		  return;
+		}
+	      while(!vpDisplay::getClick(image_, ip, button, false));
+	      ok = true;
+	    }
 	    else
 	      ok = true;
 	  }
 	catch(const std::runtime_error& e)
-	  {
-	    ROS_ERROR_STREAM("failed to initialize: "
-			     << e.what() << ", retrying...");
-	  }
+      {
+	ROS_ERROR_STREAM("failed to initialize: "
+			 << e.what() << ", retrying...");
+      }
 	catch(const std::string& str)
 	  {
 	    ROS_ERROR_STREAM("failed to initialize: "
@@ -307,7 +329,7 @@ namespace visp_tracker
 	ROS_ERROR("unknown error happened while sending the cMo, retrying...");
       }
   }
-  
+
   TrackerClient::~TrackerClient()
   {
     delete tracker_;
@@ -326,11 +348,11 @@ namespace visp_tracker
     nodeHandle_.setParam (model_description_param, modelDescription);
 
     vpHomogeneousMatrixToTransform(srv.request.initial_cMo, cMo);
-    
+
     if(trackerType_!="klt"){
       convertVpMeToInitRequest(movingEdge_, tracker_, srv);
     }
-    
+
     if(trackerType_!="mbt"){
       convertVpKltOpencvToInitRequest(kltTracker_, tracker_, srv);
     }
@@ -417,21 +439,27 @@ namespace visp_tracker
   vpHomogeneousMatrix
   TrackerClient::loadInitialPose()
   {
+    std::string initialPose =
+      getInitialPoseFileFromModelName (modelName_, modelPath_);
+    return loadPose(initialPose);
+  }
+
+  vpHomogeneousMatrix
+  TrackerClient::loadPose(const std::string& fileName)
+  {
     vpHomogeneousMatrix cMo;
     cMo.eye();
 
-    std::string initialPose =
-      getInitialPoseFileFromModelName (modelName_, modelPath_);
     std::string resource;
     try
       {
-	resource = fetchResource (initialPose);
+	resource = fetchResource (fileName);
       }
     catch (...)
       {
 	ROS_WARN_STREAM
-	  ("failed to retrieve initial pose: " << initialPose << "\n"
-	   << "using identity as initial pose");
+	  ("failed to retrieve pose: " << fileName << "\n"
+	   << "using identity as pose");
 	return cMo;
       }
     std::stringstream file;
@@ -439,8 +467,8 @@ namespace visp_tracker
 
     if (!file.good())
       {
-	ROS_WARN_STREAM("failed to load initial pose: " << initialPose << "\n"
-			<< "using identity as initial pose");
+	ROS_WARN_STREAM("failed to load pose: " << fileName << "\n"
+			<< "using identity as pose");
 	return cMo;
       }
 
@@ -450,7 +478,7 @@ namespace visp_tracker
 	file >> pose[i];
       else
 	{
-	  ROS_WARN("failed to parse initial pose file");
+	  ROS_WARN("failed to parse pose file");
 	  return cMo;
 	}
     cMo.buildFrom(pose);
@@ -596,6 +624,85 @@ namespace visp_tracker
     saveInitialPose(cMo);
   }
 
+  void TrackerClient::initFromFlashCode(){
+    vpCameraParameters cam;
+    tracker_->getCameraParameters(cam);
+
+    ros::Rate loop_rate(200);
+    vpHomogeneousMatrix cMf;
+
+    bool done = false;
+    bool detected = false;
+
+    vpImagePoint ip;
+    vpMouseButton::vpMouseButtonType button = vpMouseButton::button1;
+
+    // Load relative pose of the flashcode marker
+    std::string flashCodePoseFile =
+      getFlashCodePoseFileFromModelName(modelName_, modelPath_);
+
+    vpHomogeneousMatrix fMo;
+    fMo = loadPose(flashCodePoseFile);
+
+    vpHomogeneousMatrix cMo;
+
+    while(!done){
+      vpDisplay::display(image_);
+      vpDisplay::flush(image_);
+
+      cv::Mat image_cv = cv::Mat((int)image_.getRows(),
+				 (int)image_.getCols(),
+				 CV_8UC1, image_.bitmap);
+      detected = detector_->detect(image_cv);
+      if(detected){
+	std::vector<cv::Point> polygon = detector_->get_polygon();
+	vpImagePoint corner0(polygon[0].y,polygon[0].x);
+	vpImagePoint corner1(polygon[1].y,polygon[1].x);
+	vpImagePoint corner2(polygon[2].y,polygon[2].x);
+	vpImagePoint corner3(polygon[3].y,polygon[3].x);
+
+	/*
+	vpDisplay::displayCross(image_,corner0,10,vpColor::red,3);
+	vpDisplay::displayCross(image_,corner1,10,vpColor::red,3);
+	vpDisplay::displayCross(image_,corner2,10,vpColor::red,3);
+	vpDisplay::displayCross(image_,corner3,10,vpColor::red,3);
+	*/
+	vpDisplay::displayCharString(image_,corner0,"p1",vpColor::red);
+	vpDisplay::displayCharString(image_,corner1,"p2",vpColor::red);
+	vpDisplay::displayCharString(image_,corner2,"p3",vpColor::red);
+	vpDisplay::displayCharString(image_,corner3,"p4",vpColor::red);
+        vpDisplay::displayFrame(image_,cMf,cam,10,vpColor::none,2);
+	vpDisplay::flush(image_);
+
+	while(!vpDisplay::getClick(image_, ip, button, false)){
+	  ros::spinOnce();
+	  loop_rate.sleep();
+	  if (!ros::ok())
+	    return;
+	}
+
+	find_flashcode_pos(cMf);
+	cMo = cMf*fMo;
+
+	std::cerr<<cMf<<std::endl;
+	std::cerr<<fMo<<std::endl;
+	std::cerr<<cMo<<std::endl;
+
+	if(validatePose(cMo))
+	  done = true;
+      }
+
+      ros::spinOnce();
+      loop_rate.sleep();
+      if (!ros::ok())
+	return;
+    }
+
+    tracker_->initFromPose(image_, cMo);
+    saveInitialPose(cMo);
+
+  }
+
   void
   TrackerClient::initPoint(unsigned& i,
 			   points_t& points,
@@ -699,5 +806,40 @@ namespace visp_tracker
     modelStream << result;
     modelStream.flush();
     return true;
+  }
+
+  void TrackerClient::find_flashcode_pos(vpHomogeneousMatrix& cMo){
+    vpCameraParameters cam;
+    tracker_->getCameraParameters(cam);
+    vpImagePoint flashcode_center(640/2,480/2);
+
+    double half_size = flashcode_size_/2.0;
+    std::vector<vpPoint> flashcode_points_3D(4);
+    flashcode_points_3D[0].setWorldCoordinates(-half_size,-half_size,0.0);
+    flashcode_points_3D[1].setWorldCoordinates(half_size,-half_size,0.0);
+    flashcode_points_3D[2].setWorldCoordinates(half_size,half_size,0.0);
+    flashcode_points_3D[3].setWorldCoordinates(-half_size,half_size,0.0);
+
+    std::vector<cv::Point> polygon = detector_->get_polygon();
+    double centerX = (double)(polygon[0].x+polygon[1].x+polygon[2].x+polygon[3].x)/4.;
+    double centerY = (double)(polygon[0].y+polygon[1].y+polygon[2].y+polygon[3].y)/4.;
+    vpPixelMeterConversion::convertPoint(cam, flashcode_center, centerX, centerY);
+
+    for(unsigned int i=0;i<flashcode_points_3D.size();i++){
+      double x=0, y=0;
+      vpImagePoint poly_pt(polygon[i].y,polygon[i].x);
+
+      vpPixelMeterConversion::convertPoint(cam, poly_pt, x, y);
+      flashcode_points_3D[i].set_x(x);
+      flashcode_points_3D[i].set_y(y);
+    }
+
+    vpPose pose;
+
+    for(unsigned int i=0;i<flashcode_points_3D.size();i++)
+      pose.addPoint(flashcode_points_3D[i]);
+
+    pose.computePose(vpPose::LAGRANGE,cMo);
+    pose.computePose(vpPose::VIRTUAL_VS,cMo);
   }
 } // end of namespace visp_tracker.

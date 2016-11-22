@@ -57,7 +57,7 @@ rosbuild_add_library(trackerNodelet
   src/nodelets/tracker.cpp
   src/nodelets/client.cpp
   src/nodelets/viewer.cpp)
-target_link_libraries(trackerNodelet visp_tracker visp)
+target_link_libraries(trackerNodelet visp_tracker visp qrcode_detector datamatrix_detector dmtx zbar)
 
 ########
 # Node #
@@ -76,3 +76,6 @@ rosbuild_download_data(
   https://github.com/downloads/lagadic/visp_tracker/tutorial-static-box.bag
   bag/tutorial-static-box.bag
   1578dedd48d3f9f5515a8737845ae882)
+
+add_subdirectory(src/detectors)
+include_directories(src/detectors)
